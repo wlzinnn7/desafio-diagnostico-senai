@@ -1,10 +1,10 @@
-// 1. Crie um projeto em https://console.firebase.google.com/
-// 2. Em Configurações do projeto > Seus apps > Web, copie o objeto firebaseConfig.
-// 3. Cole seus valores abaixo. Nunca coloque senhas aqui.
-export const firebaseConfig = {
-  apiKey: "COLE_AQUI",
-  authDomain: "COLE_AQUI.firebaseapp.com",
-  databaseURL: "https://COLE_AQUI-default-rtdb.firebaseio.com",
-  projectId: "COLE_AQUI",
-  appId: "COLE_AQUI"
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAXpWZW-J_vlQaBfaRyfHSy76N5Ki1VEmE",
+  authDomain: "desafio-diagnostico-senai.firebaseapp.com",
+  databaseURL: "https://desafio-diagnostico-senai-default-rtdb.firebaseio.com",
+  projectId: "desafio-diagnostico-senai",
+  storageBucket: "desafio-diagnostico-senai.firebasestorage.app",
+  messagingSenderId: "709867106271",
+  appId: "1:709867106271:web:2a1ea6a524c61392ed9e6a"
 };
