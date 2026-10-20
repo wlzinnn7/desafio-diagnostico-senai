@@ -1,5 +1,4 @@
-
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyAXpWZW-J_vlQaBfaRyfHSy76N5Ki1VEmE",
   authDomain: "desafio-diagnostico-senai.firebaseapp.com",
   databaseURL: "https://desafio-diagnostico-senai-default-rtdb.firebaseio.com",
