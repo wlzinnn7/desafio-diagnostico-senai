@@ -1,0 +1,22 @@
+{
+  "rules": {
+    "rooms": {
+      "$room": {
+        ".read": "auth != null && data.exists()",
+        ".write": "auth != null && ((data.exists() && data.child('hostUid').val() === auth.uid) || (!data.exists() && auth.token.firebase.sign_in_provider === 'password' && newData.child('hostUid').val() === auth.uid))",
+        "players": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('rooms').child($room).child('phase').val() === 'lobby' && newData.hasChildren(['name','score','joinedAt']) && newData.child('score').val() === 0 && newData.child('name').isString() && newData.child('name').val().length <= 22 && newData.child('name').val().length >= 2"
+          }
+        },
+        "answers": {
+          "$index": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('rooms').child($room).child('phase').val() === 'question' && root.child('rooms').child($room).child('index').val() === $index*1 && root.child('rooms').child($room).child('endsAt').val() > now && root.child('rooms').child($room).child('players').child($uid).exists() && newData.child('choice').isNumber() && newData.child('choice').val() >= 0 && newData.child('choice').val() <= 3"
+            }
+          }
+        }
+      }
+    }
+  }
+}
