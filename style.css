@@ -73,3 +73,39 @@
 
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .question { font-family: 'Space Grotesk', 'DM Sans', Arial, sans-serif; }
+
+/* Quiz v3: pódio, rodada dobrada e ranking responsivo. */
+.question-header{display:flex;align-items:center;justify-content:space-between;gap:9px;flex-wrap:wrap}
+.bonus-tag{background:rgba(244,172,50,.15);color:#ffcd73;border-color:#bd833a}
+.bonus-glow{box-shadow:0 0 18px rgba(243,184,65,.25)}
+.bonus-banner{margin-top:16px;border:1px solid #deaa40;background:linear-gradient(100deg,#4a3219,#2d271a);color:#ffe2a5;padding:13px 15px;border-radius:12px;font-weight:800;font-size:13px;line-height:1.4}
+.earned{margin-top:13px;padding:13px 15px;border-radius:12px;background:#15293a;border:1px solid #38536b;font-weight:700}
+.earned-good{background:#143c33;border-color:#4aa98d;color:#a8ffda}
+.top-three{display:grid;gap:8px;margin:12px 0}
+.top-three .rank{border:1px solid #365569;border-radius:12px;padding:13px 10px;background:#11283c}
+.top-three .rank-1{border-color:#b28d46;background:linear-gradient(110deg,#4e3b22,#1a2a3a)}
+.top-three .rank-2{border-color:#70899c;background:linear-gradient(110deg,#2d4154,#17283b)}
+.top-three .rank-3{border-color:#916f5c;background:linear-gradient(110deg,#3c2c29,#17283b)}
+.rest-title{font-size:10px;letter-spacing:1.8px;font-weight:800;color:#aabfce;margin:17px 0 5px}
+.top-three .rank .pos{font-size:25px}
+.podium{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:end;gap:10px;margin:28px 0 24px;text-align:center}
+.podium-place{border:1px solid #456477;border-radius:17px;padding:20px 12px;min-width:0;background:linear-gradient(150deg,#193247,#0f2334)}
+.podium-1{order:2;min-height:225px;border-color:#efbd5b;background:linear-gradient(150deg,#503e25,#17334a)}
+.podium-2{order:1;min-height:190px;border-color:#a1b9ce}
+.podium-3{order:3;min-height:167px;border-color:#ae826a}
+.podium-medal{font-size:44px}
+.podium-title{color:#b7ccdc;font-size:11px;letter-spacing:1px;font-weight:800;margin:6px 0}
+.podium-name{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:clamp(13px,2.3vw,19px);line-height:1.24;overflow-wrap:anywhere;margin:5px 0 10px}
+.podium-points{font-size:14px;color:#70e9ed;font-weight:800}
+@media(max-width:600px){
+  .bonus-banner{font-size:12px;padding:11px}
+  .question-header .tag{font-size:10px}
+  .top-three .rank{padding:11px 9px}
+  .podium{grid-template-columns:minmax(0,1fr);gap:10px;align-items:stretch}
+  .podium-place{min-height:0;padding:15px}
+  .podium-1,.podium-2,.podium-3{order:initial;min-height:0}
+  .podium-medal{font-size:35px}
+  .podium-name{font-size:20px}
+  .podium-points{font-size:16px}
+  .room-top{gap:12px}
+}

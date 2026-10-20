@@ -1,0 +1,30 @@
+ATUALIZAÇÃO — DESAFIO DE DIAGNÓSTICO (SENAI-MG)
+
+NOVIDADES
+• 20 questões sobre diagnóstico e peças do computador.
+• Respostas corretas valem de 100 a 200 pontos, dependendo da rapidez.
+• Em cada partida, 5 das 20 questões são sorteadas para valer 2x (200 a 400 pontos por acerto).
+• O multiplicador é o mesmo para todos na rodada, aparece quando a questão é aberta.
+• Ranking TOP 3 com medalhas durante o jogo e pódio final.
+• Layout otimizado para celular preservado.
+• O horário das respostas vem do servidor Firebase.
+
+COMO PUBLICAR SEM INSTALAR NADA NO SENAI
+1. Abra https://github.com/wlzinnn7/desafio-diagnostico-senai
+2. Em Code, clique Add file > Upload files.
+3. Envie SOMENTE estes quatro arquivos da pasta deste ZIP:
+   index.html, app.js, style.css e questions.js
+4. Confirme a substituição dos arquivos existentes com Commit changes.
+5. Aguarde o GitHub Pages concluir o deployment (Actions).
+6. Recarregue a página no PC (Ctrl + Shift + R) e no celular (feche e abra a aba).
+7. Crie uma SALA NOVA para testar as 20 questões e os bônus. Não continue uma sala da versão antiga.
+
+IMPORTANTE
+• NÃO substitua firebase-config.js: ele já contém as configurações do seu projeto.
+• NÃO precisa alterar as regras do Realtime Database para a atualização funcionar com
+  as regras que você publicou anteriormente (campos choice e at continuam existindo).
+• O ranking e os pontos de velocidade são calculados ao revelar a resposta no painel do apresentador.
+• Jogadores mal-intencionados com conhecimento técnico podem manipular clientes web;
+  para uma competição com prêmios relevantes, é recomendável uma função de servidor
+  para validar o horário de resposta e computar a pontuação.
+• O QR Code continua dependendo de um serviço externo; o código da sala funciona sem QR Code.
