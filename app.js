@@ -80,6 +80,7 @@ async function joinRoom() {
     const snap = await get(ref(db, 'rooms/' + roomCode));
     if (!snap.exists()) return notice('Essa sala não existe.');
     const state = snap.val();
+    if (state.kicked?.[user.uid]) return notice('Você foi removido desta sala pelo apresentador.');
     if (state.phase === 'finished') return notice('Esta partida já terminou.');
     if (state.phase !== 'lobby' && !state.players?.[user.uid]) return notice('Partida em andamento. Aguarde uma nova sala.');
     if (!state.players?.[user.uid]) {
@@ -154,8 +155,61 @@ function watchRoom() {
   unsubscribe = onValue(ref(db, 'rooms/' + code), snap => {
     room = snap.val();
     if (!room) { notice('Sala encerrada.'); home(); return; }
+    // Sai do painel imediatamente quando o operador remove este participante.
+    if (mode === 'player' && (room.kicked?.[user?.uid] || !room.players?.[user?.uid])) {
+      showExpulsion();
+      return;
+    }
     renderRoom();
   }, err);
+}
+function showExpulsion() {
+  const removedCode = code;
+  stopWatch();
+  room = null;
+  mode = 'removed';
+  root(`<main class="panel removed-screen"><div class="bigicon">🚫</div>
+    <h2>Você foi removido da partida</h2>
+    <p class="muted">O apresentador removeu sua participação na sala <strong>${escapeHTML(removedCode)}</strong>.</p>
+    <p class="muted mini">Você não poderá voltar a esta sala com o mesmo acesso.</p>
+    <button class="btn primary" id="go-home">VOLTAR AO INÍCIO</button></main>`);
+  $('go-home').onclick = home;
+}
+function participantControls() {
+  const ps = players();
+  if (!ps.length) return '<p class="muted">Nenhum participante na sala.</p>';
+  return `<div class="manage-list">${ps.map(p => `<div class="manage-person">
+    <div class="manage-person-info"><strong>${escapeHTML(p.name)}</strong>
+    <span class="muted mini">${fmt(p.score)} pts</span></div>
+    <button class="btn danger kick-button" data-kick="${escapeHTML(p.uid)}" type="button" aria-label="Expulsar ${escapeHTML(p.name)}">EXPULSAR</button>
+  </div>`).join('')}</div>`;
+}
+async function kickPlayer(uid) {
+  if (mode !== 'host' || !user || hostBusy || room?.phase === 'finished') return;
+  const p = room?.players?.[uid];
+  if (!p) return notice('Esse participante já saiu da partida.');
+  const name = p.name;
+  if (!confirm(`Expulsar ${name} da sala ${code}?\n\nO jogador sairá da partida, perderá os pontos e não poderá voltar com o mesmo acesso.`)) return;
+  hostBusy = true;
+  try {
+    const outcome = await runTransaction(ref(db, 'rooms/' + code), current => {
+      if (!current || current.hostUid !== user.uid || current.phase === 'finished' || !current.players?.[uid]) return;
+      const removedName = current.players[uid].name || name;
+      delete current.players[uid];
+      if (Object.keys(current.players).length === 0) current.players = null;
+      // Mantém um registro da expulsão para impedir retorno com o mesmo UID.
+      current.kicked ??= {};
+      current.kicked[uid] = { name: removedName, at: serverNow() };
+      // Descarta respostas enviadas pelo participante removido, inclusive na rodada atual.
+      for (const answers of Object.values(current.answers || {})) {
+        if (answers && typeof answers === 'object') delete answers[uid];
+      }
+      return current;
+    }, { applyLocally: false });
+    if (outcome.committed) notice(`${name} foi removido da partida.`);
+    else notice('Não foi possível expulsar: a sala ou o participante mudou.');
+  } catch (e) { err(e); }
+  finally { hostBusy = false; }
 }
 function players() {
   return Object.entries(room?.players || {}).map(([uid, p]) => ({ uid, ...p }))
@@ -285,6 +339,9 @@ function renderRoom() {
     ${headerStats()}
     <div class="game-layout"><div class="game-primary">${content}</div>
     <div class="game-sidebar"><section class="panel"><h3>🏆 TOP 3 — Ranking ao vivo</h3>${leaderboard()}</section>
+    ${isHost && !finished ? `<section class="panel manage-panel"><h3>👥 Gerenciar participantes</h3>
+    <p class="muted mini">Remova alguém da partida e do ranking.</p>
+    ${participantControls()}</section>` : ''}
     ${isHost ? `<section class="panel"><h3>Convide os jogadores</h3><div class="center">
       <img class="qr" alt="QR Code para entrar" src="https://api.qrserver.com/v1/create-qr-code/?size=170x170&data=${encodeURIComponent(entryURL)}">
       <p class="linkbox">${escapeHTML(entryURL)}</p>
@@ -302,6 +359,7 @@ function renderRoom() {
   if ($('restart')) $('restart').onclick = () => advance('restart');
   if ($('copy')) $('copy').onclick = () => navigator.clipboard.writeText(entryURL).then(() => notice('Link copiado!')).catch(() => notice(entryURL));
   document.querySelectorAll('[data-choice]').forEach(b => b.onclick = () => submit(Number(b.dataset.choice)));
+  document.querySelectorAll('[data-kick]').forEach(b => b.onclick = () => kickPlayer(b.dataset.kick));
 
   clearInterval(interval);
   interval = setInterval(() => {

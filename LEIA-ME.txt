@@ -1,0 +1,29 @@
+DESAFIO DE DIAGNÓSTICO – SENAI-MG – VERSÃO 5
+
+NOVO: botão EXPULSAR ao lado de cada participante no painel do apresentador.
+- Exige confirmação antes de remover.
+- Jogador removido sai da partida e recebe aviso.
+- Pontos e respostas do participante são retirados do ranking e do jogo.
+- Seu identificador é colocado na lista de expulsos da sala.
+- Outros jogadores seguem normalmente.
+- Continua funcionando em celular e computador.
+
+PASSO 1 — GITHUB
+1. Abra https://github.com/wlzinnn7/desafio-diagnostico-senai
+2. Add file > Upload files
+3. Extraia este ZIP e envie index.html, app.js, style.css e questions.js.
+4. Commit changes. Aguarde finalizar o GitHub Pages (aba Actions).
+5. Recarregue o site. Crie uma sala nova para testar.
+
+PASSO 2 — REGRAS DO FIREBASE (OBRIGATÓRIO)
+1. Firebase Console > seu projeto > Realtime Database > Regras.
+2. Copie o conteúdo INTEIRO de database.rules.json e substitua o texto atual.
+3. Clique Publicar somente se não houver erros.
+
+NÃO envie firebase-config.js do ZIP: o existente no GitHub deve permanecer.
+Não troque as credenciais nem altere a conta do apresentador.
+
+IMPORTANTE: autenticação anônima identifica uma sessão, não uma pessoa real.
+Expulso não pode voltar com o mesmo UID/sessão, mas alguém pode obter um
+novo UID usando outra sessão ou navegador. Para impedir novos cadastros
+completamente, seria necessária moderação da entrada de participantes.
