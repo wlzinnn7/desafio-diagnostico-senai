@@ -1,6 +1,6 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import { getAuth, onAuthStateChanged, signInAnonymously, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
-import { getDatabase, ref, set, update, get, onValue, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
+import { getDatabase, ref, set, update, get, onValue, serverTimestamp, runTransaction } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
 import { firebaseConfig } from './firebase-config.js';
 import { questions } from './questions.js';
 
@@ -10,6 +10,7 @@ const ROUND_MS = 30000;
 const BASE_POINTS = 100;
 const SPEED_POINTS = 100;
 const DOUBLE_ROUNDS = 5;
+const SCORE_PRECISION = 1000; // Três casas decimais distinguem respostas por milissegundos.
 
 let auth, db, user = null;
 let room = null, code = '', mode = '', unsubscribe = null, interval = null;
@@ -19,7 +20,8 @@ const configured = !Object.values(firebaseConfig).some(x => String(x).includes('
 const $ = id => document.getElementById(id);
 const serverNow = () => Date.now() + serverOffset;
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
-const fmt = n => Math.round(n || 0).toLocaleString('pt-BR');
+const fmt = n => (Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+const roundScore = n => Math.round((Number(n) + Number.EPSILON) * SCORE_PRECISION) / SCORE_PRECISION;
 
 function notice(message) {
   toastEl.textContent = message;
@@ -51,7 +53,7 @@ function home() {
   root(`<main class="hero"><div><div class="tag">🔧 LABORATÓRIO DE DIAGNÓSTICO</div>
     <h1>Você consegue <span>descobrir o defeito?</span></h1>
     <p>Investigue problemas de computadores, responda antes do tempo acabar e dispute o pódio!</p>
-    <div class="toolbar"><div class="tag">20 questões</div><div class="tag">100–200 pts por acerto</div>
+    <div class="toolbar"><div class="tag">${questions.length} questões</div><div class="tag">100–200 pts por acerto</div>
     <div class="tag">30 segundos</div><div class="tag bonus-tag">⚡ Rodadas 2×</div></div></div>
     <div><section class="panel stack"><h2>Entrar em uma partida</h2>
     <label class="field">Código da sala<input id="joincode" placeholder="Ex.: AB12CD" maxlength="6" autocomplete="off" style="text-transform:uppercase"></label>
@@ -189,11 +191,31 @@ function headerStats() {
     <div class="stat"><strong id="timer">${remaining}</strong><small>segundos</small></div></div>`;
 }
 function pointsForCorrectAnswer(answer, endTime, multiplier) {
-  // Resposta é carimbada com a hora do servidor Firebase, não a hora do celular.
+  // O Firebase resolve serverTimestamp() para milissegundos inteiros no servidor.
   const at = Number(answer?.at);
   if (!Number.isFinite(at) || at <= 0) return 0;
-  const remaining = Math.max(0, Math.min(ROUND_MS, endTime - at));
-  return (BASE_POINTS + Math.floor(SPEED_POINTS * remaining / ROUND_MS)) * multiplier;
+  const remainingMs = Math.max(0, Math.min(ROUND_MS, endTime - at));
+  return roundScore((BASE_POINTS + SPEED_POINTS * remainingMs / ROUND_MS) * multiplier);
+}
+function everybodyAnswered(state) {
+  if (state?.phase !== 'question') return false;
+  const ids = Object.keys(state.players || {});
+  const answers = state.answers?.[state.index] || {};
+  return ids.length > 0 && ids.every(uid => Object.hasOwn(answers, uid));
+}
+function scoreRound(state) {
+  const i = Number(state.index);
+  if (!Number.isInteger(i) || !questions[i]) return;
+  const answers = state.answers?.[i] || {};
+  const mult = Number(state.multiplier) === 2 ? 2 : 1;
+  for (const [uid, answer] of Object.entries(answers)) {
+    if (state.players?.[uid] && answer.choice === questions[i].c) {
+      const earned = pointsForCorrectAnswer(answer, state.endsAt, mult);
+      state.players[uid].score = roundScore((Number(state.players[uid].score) || 0) + earned);
+    }
+  }
+  state.scoredEndsAt = state.endsAt;
+  state.endsAt = 0;
 }
 function selectedScore() {
   const a = room?.answers?.[room.index]?.[user?.uid];
@@ -220,7 +242,7 @@ function renderRoom() {
     content = `<div class="panel center"><div class="bigicon">🧠</div><div class="eyebrow">SALA DE ESPERA</div>
       <h2>${isHost ? 'Tudo pronto para começar!' : 'Aguardando o apresentador…'}</h2>
       <p class="muted">${isHost ? 'Projete o código e espere os visitantes entrarem.' : 'Você já está na sala. A partida começa em instantes.'}</p>
-      <div class="notice">⚡ Respostas certas valem 100 a 200 pontos. Quanto mais rápido, mais pontos! Em 5 rodadas surpresa, tudo vale <strong>2×</strong>.</div>
+      <div class="notice">⚡ Respostas certas valem 100 a 200 pontos. Pontuação considera até os milissegundos! Em 5 rodadas surpresa, tudo vale <strong>2×</strong>.</div>
       ${isHost ? '<div style="margin-top:16px"><button id="start" class="btn primary">▶ INICIAR DESAFIO</button></div>' : ''}</div>`;
   } else if (finished) {
     content = `<div class="panel center"><div class="bigicon">🏆</div><div class="eyebrow">DESAFIO CONCLUÍDO</div>
@@ -233,10 +255,10 @@ function renderRoom() {
       ? `<div class="notice"><strong>💡 Diagnóstico:</strong> ${escapeHTML(q.e)}</div>
          ${isPlayer ? `<div class="earned ${result > 0 ? 'earned-good' : ''}">${result == null ? 'Você não respondeu a esta questão.' : result > 0 ? '✅ Você ganhou ' + fmt(result) + ' pontos!' : 'Você não pontuou nesta rodada.'}</div>` : ''}`
       : isPlayer
-        ? mine ? '<div class="notice">✅ Resposta enviada! Aguarde a revelação.</div>'
+        ? mine ? '<div class="notice">✅ Resposta enviada! A questão será revelada quando todos responderem ou o tempo terminar.</div>'
                : !open ? '<div class="notice">⏰ Tempo encerrado. Aguarde o apresentador.</div>'
-                       : '<p class="muted mini">Escolha uma alternativa. Quanto mais rápido acertar, mais pontos!</p>'
-        : `<p class="muted">${answered} de ${players().length} participantes responderam.</p>`;
+                       : '<p class="muted mini">Escolha uma alternativa: cada milissegundo conta!</p>'
+        : `<p class="muted">${answered} de ${players().length} participantes responderam. A resposta será revelada automaticamente quando todos responderem ou o tempo acabar.</p>`;
 
     content = `<div class="panel">
       <div class="question-header"><span class="tag">QUESTÃO ${room.index + 1} DE ${questions.length}</span>
@@ -249,7 +271,7 @@ function renderRoom() {
         return `<button class="answer ${status}" data-choice="${i}" ${!isPlayer || !open || mine ? 'disabled' : ''}><small>${'ABCD'[i]}</small>${escapeHTML(v)}</button>`;
       }).join('')}</div>
       ${note}
-      ${isHost ? `<div class="toolbar"><button id="advance" class="btn ${live ? 'warning' : 'primary'}">${live ? '✓ REVELAR RESPOSTA' : room.index === questions.length-1 ? '🏆 FINALIZAR PARTIDA' : 'PRÓXIMA QUESTÃO →'}</button></div>` : ''}
+      ${isHost ? `<div class="toolbar"><button id="advance" class="btn ${live ? 'warning' : 'primary'}">${live ? '✓ REVELAR AGORA' : room.index === questions.length-1 ? '🏆 FINALIZAR PARTIDA' : 'PRÓXIMA QUESTÃO →'}</button></div>` : ''}
     </div>`;
   } else {
     content = '<div class="panel">Carregando questão…</div>';
@@ -259,7 +281,7 @@ function renderRoom() {
   root(`<div class="toolbar room-top" style="justify-content:space-between;margin-bottom:18px">
     <div><div class="eyebrow">${isHost ? 'PAINEL DO APRESENTADOR' : 'PARTICIPANTE'}</div>
     <div style="font:700 23px 'Space Grotesk'">Sala <span style="color:#6cdeed">${escapeHTML(code)}</span></div></div>
-    <button class="btn ghost" id="leave">${isHost ? 'FECHAR PAINEL' : 'SAIR'}</button></div>
+    <div class="toolbar room-actions">${isHost && !finished ? '<button class="btn danger" id="endgame">■ ENCERRAR PARTIDA</button>' : ''}<button class="btn ghost" id="leave">${isHost ? 'FECHAR PAINEL' : 'SAIR'}</button></div></div>
     ${headerStats()}
     <div class="game-layout"><div class="game-primary">${content}</div>
     <div class="game-sidebar"><section class="panel"><h3>🏆 TOP 3 — Ranking ao vivo</h3>${leaderboard()}</section>
@@ -269,6 +291,12 @@ function renderRoom() {
       <button id="copy" class="btn ghost full">COPIAR LINK DA SALA</button></div>
       <p class="muted mini">O QR Code usa um serviço externo. Também dá para entrar digitando o código.</p></section>` : ''}</div></div>`);
   $('leave').onclick = () => { if (confirm(isHost ? 'Sair do painel? A sala continuará aberta.' : 'Sair do jogo?')) home(); };
+  if ($('endgame')) $('endgame').onclick = () => {
+    const message = live
+      ? 'Encerrar a partida agora? As respostas JÁ enviadas nesta questão serão pontuadas e o pódio será exibido para todos.'
+      : 'Encerrar a partida agora e exibir o pódio para todos?';
+    if (confirm(message)) advance('finishNow');
+  };
   if ($('start')) $('start').onclick = () => advance('start');
   if ($('advance')) $('advance').onclick = () => advance(live ? 'reveal' : room.index === questions.length-1 ? 'finish' : 'next');
   if ($('restart')) $('restart').onclick = () => advance('restart');
@@ -283,7 +311,12 @@ function renderRoom() {
     if (mode === 'player' && room?.phase === 'question' && room.endsAt <= serverNow()) {
       document.querySelectorAll('[data-choice]').forEach(b => b.disabled = true);
     }
-  }, 250);
+    // O apresentador mantém a sala sincronizada. Transação evita pontuação duplicada.
+    if (mode === 'host' && room?.phase === 'question' &&
+        (everybodyAnswered(room) || room.endsAt <= serverNow())) {
+      advance('reveal');
+    }
+  }, 150);
 }
 async function submit(choice) {
   try {
@@ -297,47 +330,52 @@ async function submit(choice) {
   } catch (e) { err(e); renderRoom(); }
 }
 async function advance(action) {
-  if (hostBusy) return;
+  if (hostBusy || mode !== 'host' || !user) return;
   hostBusy = true;
   try {
-    const snap = await get(ref(db, 'rooms/' + code));
-    const now = snap.val();
-    if (!now || now.hostUid !== user.uid) throw Error('Somente o apresentador pode controlar a sala.');
-    if (action === 'start' || action === 'next') {
-      if (action === 'start' && now.phase !== 'lobby') return;
-      if (action === 'next' && now.phase !== 'reveal') return;
-      const i = action === 'start' ? 0 : now.index + 1;
-      if (i >= questions.length) return;
-      const mult = (now.bonusRounds || []).includes(i) ? 2 : 1;
-      await update(ref(db,'rooms/' + code), {
-        index: i, phase: 'question', endsAt: serverNow() + ROUND_MS,
-        scoredEndsAt: 0, multiplier: mult
-      });
-    } else if (action === 'reveal') {
-      if (now.phase !== 'question') return;
-      const ix = now.index;
-      const ans = now.answers?.[ix] || {};
-      const mult = Number(now.multiplier) === 2 ? 2 : 1;
-      const updates = { phase: 'reveal', endsAt: 0, scoredEndsAt: now.endsAt };
-      for (const [uid, a] of Object.entries(ans)) {
-        if (now.players?.[uid] && a.choice === questions[ix].c) {
-          const awarded = pointsForCorrectAnswer(a, now.endsAt, mult);
-          updates[`players/${uid}/score`] = (now.players[uid].score || 0) + awarded;
-        }
-      }
-      await update(ref(db,'rooms/' + code), updates);
-    } else if (action === 'restart') {
-      if (now.phase !== 'finished') return;
-      const updates = {
-        phase:'lobby', index:-1, endsAt:0, scoredEndsAt:0, multiplier:1,
-        bonusRounds:pickDoubleRounds(), answers:null
-      };
-      for (const uid of Object.keys(now.players || {})) updates[`players/${uid}/score`] = 0;
-      await update(ref(db,'rooms/' + code),updates);
-    } else if (action === 'finish') {
-      if (now.phase !== 'reveal' || now.index !== questions.length-1) return;
-      await update(ref(db,'rooms/' + code),{ phase:'finished', endsAt:0 });
-    }
+    const result = await runTransaction(ref(db, 'rooms/' + code), current => {
+      // Uma transação em toda a sala impede computar a mesma rodada duas vezes,
+      // inclusive se o operador abriu o painel em duas abas.
+      if (!current || current.hostUid !== user.uid) return;
+      if (action === 'start' || action === 'next') {
+        if (action === 'start' && current.phase !== 'lobby') return;
+        if (action === 'next' && current.phase !== 'reveal') return;
+        const i = action === 'start' ? 0 : current.index + 1;
+        if (i >= questions.length) return;
+        current.index = i;
+        current.phase = 'question';
+        current.endsAt = serverNow() + ROUND_MS;
+        current.scoredEndsAt = 0;
+        current.multiplier = (current.bonusRounds || []).includes(i) ? 2 : 1;
+      } else if (action === 'reveal') {
+        if (current.phase !== 'question') return;
+        scoreRound(current);
+        current.phase = 'reveal';
+      } else if (action === 'finishNow') {
+        if (current.phase === 'finished') return;
+        // Encerrar durante uma rodada não joga fora respostas já enviadas.
+        if (current.phase === 'question') scoreRound(current);
+        current.phase = 'finished';
+        current.endsAt = 0;
+      } else if (action === 'restart') {
+        if (current.phase !== 'finished') return;
+        current.phase = 'lobby';
+        current.index = -1;
+        current.endsAt = 0;
+        current.scoredEndsAt = 0;
+        current.multiplier = 1;
+        current.bonusRounds = pickDoubleRounds();
+        current.answers = null;
+        for (const p of Object.values(current.players || {})) p.score = 0;
+      } else if (action === 'finish') {
+        if (current.phase !== 'reveal' || current.index !== questions.length-1) return;
+        current.phase = 'finished';
+        current.endsAt = 0;
+      } else return;
+      return current;
+    }, { applyLocally: false });
+    if (!result.committed && !['reveal', 'finish'].includes(action))
+      notice('Ação não aplicada. Confira o estado da partida.');
   } catch (e) { err(e); }
   finally { hostBusy = false; }
 }

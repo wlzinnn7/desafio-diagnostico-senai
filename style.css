@@ -109,3 +109,17 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .podium-points{font-size:16px}
   .room-top{gap:12px}
 }
+
+/* v4: botões de controle e alternativas compactas em telas pequenas. */
+.room-actions {justify-content:flex-end}
+.question {font-size:clamp(24px,2.75vw,35px);line-height:1.25}
+.answers .answer {font-weight:650;overflow-wrap:anywhere}
+@media(max-width:600px){
+  .room-top {align-items:stretch; flex-direction:column}
+  .room-actions {width:100%;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .room-actions .btn{font-size:11px;padding:11px 8px;min-width:0}
+  .question {font-size:clamp(20px,5.9vw,26px)}
+  .answer {font-size:14px;line-height:1.4;min-height:67px}
+  .score {font-variant-numeric:tabular-nums}
+}
+@media(max-width:340px){.room-actions{grid-template-columns:1fr}}
