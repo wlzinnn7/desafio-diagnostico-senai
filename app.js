@@ -2,7 +2,8 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/fireba
 import { getAuth, onAuthStateChanged, signInAnonymously, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { getDatabase, ref, set, update, get, onValue, serverTimestamp, runTransaction } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
 import { firebaseConfig } from './firebase-config.js';
-import { questions } from './questions.js';
+// Nenhuma questão ou gabarito é publicado no GitHub.
+// O banco privado vem do Firebase apenas para o UID do operador.
 
 const appEl = document.getElementById('app');
 const toastEl = document.getElementById('toast');
@@ -11,6 +12,11 @@ const BASE_POINTS = 100;
 const SPEED_POINTS = 100;
 const DOUBLE_ROUNDS = 5;
 const SCORE_PRECISION = 1000; // Três casas decimais distinguem respostas por milissegundos.
+const EXPECTED_QUESTIONS = 20;
+let privateQuestions = null;
+let privateBonusRounds = null;
+const totalQuestions = () => Number(room?.totalQuestions) || privateQuestions?.length || EXPECTED_QUESTIONS;
+const privateBankPath = 'privateQuestionBanks/current';
 
 let auth, db, user = null;
 let room = null, code = '', mode = '', unsubscribe = null, interval = null;
@@ -53,7 +59,7 @@ function home() {
   root(`<main class="hero"><div><div class="tag">🔧 LABORATÓRIO DE DIAGNÓSTICO</div>
     <h1>Você consegue <span>descobrir o defeito?</span></h1>
     <p>Investigue problemas de computadores, responda antes do tempo acabar e dispute o pódio!</p>
-    <div class="toolbar"><div class="tag">${questions.length} questões</div><div class="tag">100–200 pts por acerto</div>
+    <div class="toolbar"><div class="tag">${EXPECTED_QUESTIONS} questões</div><div class="tag">100–200 pts por acerto</div>
     <div class="tag">30 segundos</div><div class="tag bonus-tag">⚡ Rodadas 2×</div></div></div>
     <div><section class="panel stack"><h2>Entrar em uma partida</h2>
     <label class="field">Código da sala<input id="joincode" placeholder="Ex.: AB12CD" maxlength="6" autocomplete="off" style="text-transform:uppercase"></label>
@@ -107,32 +113,78 @@ function hostLogin() {
     } catch (e) { err(e); }
   };
 }
-function hostDashboard() {
-  stopWatch(); mode = 'admin';
+function validateBank(value) {
+  const qs = Array.isArray(value) ? value : value?.questions;
+  if (!Array.isArray(qs) || qs.length !== EXPECTED_QUESTIONS) throw Error('O banco privado precisa ter 20 questões.');
+  qs.forEach((q,i) => {
+    if (typeof q.q !== 'string' || !q.q.trim() || !Array.isArray(q.a) || q.a.length !== 4 ||
+        !q.a.every(a => typeof a === 'string' && !!a.trim()) || !Number.isInteger(q.c) ||
+        q.c < 0 || q.c > 3 || typeof q.e !== 'string' || !q.e.trim()) {
+      throw Error(`Questão ${i+1} inválida no arquivo privado.`);
+    }
+  });
+  return qs;
+}
+async function hostDashboard() {
+  stopWatch(); mode = 'admin'; privateQuestions = null;
+  try {
+    const snap = await get(ref(db, privateBankPath));
+    if (snap.exists()) privateQuestions = validateBank(snap.val());
+  } catch(e) {
+    // Mostra o erro de autenticação, sem conceder acesso a nenhum arquivo público.
+    err(e);
+    if (e?.code === 'PERMISSION_DENIED' || e?.code === 'permission-denied') {
+      notice('Seu UID não está autorizado nas regras privadas do Firebase.');
+    }
+  }
+  renderHostDashboard();
+}
+function renderHostDashboard() {
+  const ready = !!privateQuestions;
   root(`<div class="panel" style="max-width:730px;margin:45px auto">
     <div class="tag">🛡️ ADMINISTRADOR</div><h2 style="margin-top:15px">Controle do desafio</h2>
-    <p class="muted">Crie uma sala e projete o código. Em cada partida, ${DOUBLE_ROUNDS} questões são sorteadas para valer o dobro.</p>
-    <div class="statrow"><div class="stat"><strong>${questions.length}</strong><small>questões</small></div>
+    <p class="muted">O gabarito é privado: somente sua conta autorizada lê as questões no Firebase.</p>
+    <div class="statrow"><div class="stat"><strong>${ready ? privateQuestions.length : '—'}</strong><small>questões</small></div>
     <div class="stat"><strong>30s</strong><small>por rodada</small></div>
     <div class="stat"><strong>2×</strong><small>rodadas surpresa</small></div></div>
-    <div class="toolbar"><button id="new" class="btn primary">+ CRIAR SALA</button>
-    <button id="logout" class="btn ghost">SAIR</button></div></div>`);
+    ${ready ? '<div class="notice">✅ Banco privado carregado. Você pode criar sua sala.</div>'
+       : '<div class="notice">🔒 Banco privado ainda não importado. Selecione o arquivo JSON privado, sem colocá-lo no GitHub.</div>'}
+    <div class="stack" style="margin-top:16px">
+      <label class="field">Importar ou substituir o banco privado de 20 questões
+      <input id="privateFile" type="file" accept=".json,application/json"></label>
+      <button id="importBank" class="btn ghost">⬆ IMPORTAR PARA O FIREBASE PRIVADO</button>
+      <div class="toolbar"><button id="new" class="btn primary" ${ready ? '' : 'disabled'}>+ CRIAR SALA</button>
+      <button id="logout" class="btn ghost">SAIR</button></div>
+    </div></div>`);
   $('new').onclick = createRoom;
-  $('logout').onclick = async () => { await signOut(auth); home(); };
+  $('logout').onclick = async () => { await signOut(auth); privateQuestions = null; home(); };
+  $('importBank').onclick = async () => {
+    const file = $('privateFile').files?.[0];
+    if (!file) return notice('Selecione seu arquivo JSON privado.');
+    try {
+      const bank = validateBank(JSON.parse(await file.text()));
+      if (!confirm('Importar 20 questões e respostas para o Firebase privado? Nenhuma resposta será publicada no GitHub.')) return;
+      await set(ref(db, privateBankPath), { questions: bank, version: 6, importedAt: serverTimestamp() });
+      privateQuestions = bank;
+      notice('Banco privado importado com sucesso.');
+      renderHostDashboard();
+    } catch(e) { err(e); }
+  };
 }
 // Sorteia exatamente 5 questões diferentes. O sorteio é feito uma vez por partida,
 // e o multiplicador passa a ser público apenas na rodada que começa.
 function pickDoubleRounds() {
-  const ids = Array.from({ length: questions.length }, (_, i) => i);
+  const ids = Array.from({ length: EXPECTED_QUESTIONS }, (_, i) => i);
   for (let i = ids.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [ids[i], ids[j]] = [ids[j], ids[i]];
   }
-  return ids.slice(0, Math.min(DOUBLE_ROUNDS, questions.length)).sort((a,b) => a-b);
+  return ids.slice(0, Math.min(DOUBLE_ROUNDS, EXPECTED_QUESTIONS)).sort((a,b) => a-b);
 }
 async function createRoom() {
   try {
     if (!auth.currentUser || auth.currentUser.isAnonymous) return notice('Entre com a conta de apresentador.');
+    if (!privateQuestions) return notice('Importe primeiro o banco de questões privado.');
     let roomCode = '';
     for (let i = 0; i < 10; i++) {
       const candidate = Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -142,10 +194,15 @@ async function createRoom() {
     }
     if (!roomCode) throw Error('Não foi possível gerar um código de sala. Tente novamente.');
     code = roomCode; mode = 'host';
+    privateBonusRounds = pickDoubleRounds();
+    // Somente o operador poderá ler este sorteio futuro.
+    await set(ref(db, 'privateRoomData/' + code), {
+      hostUid: auth.currentUser.uid, bonusRounds: privateBonusRounds, createdAt: serverTimestamp()
+    });
     await set(ref(db, 'rooms/' + code), {
       hostUid: auth.currentUser.uid,
       createdAt: serverTimestamp(), phase: 'lobby', index: -1, endsAt: 0,
-      multiplier: 1, bonusRounds: pickDoubleRounds(), players: {}, answers: {}
+      multiplier: 1, totalQuestions: privateQuestions.length, players: {}, answers: {}
     });
     watchRoom();
   } catch (e) { err(e); }
@@ -241,7 +298,7 @@ function podium() {
 function headerStats() {
   const remaining = room.phase === 'question' ? Math.max(0, Math.ceil((room.endsAt - serverNow()) / 1000)) : '—';
   return `<div class="statrow"><div class="stat"><strong>${players().length}</strong><small>participantes</small></div>
-    <div class="stat"><strong>${Math.max(0, Number(room.index ?? -1)+1)}/${questions.length}</strong><small>questão</small></div>
+    <div class="stat"><strong>${Math.max(0, Number(room.index ?? -1)+1)}/${totalQuestions()}</strong><small>questão</small></div>
     <div class="stat"><strong id="timer">${remaining}</strong><small>segundos</small></div></div>`;
 }
 function pointsForCorrectAnswer(answer, endTime, multiplier) {
@@ -259,29 +316,32 @@ function everybodyAnswered(state) {
 }
 function scoreRound(state) {
   const i = Number(state.index);
-  if (!Number.isInteger(i) || !questions[i]) return;
+  if (!Number.isInteger(i) || !privateQuestions?.[i]) return;
   const answers = state.answers?.[i] || {};
   const mult = Number(state.multiplier) === 2 ? 2 : 1;
+  state.roundEarned = {};
   for (const [uid, answer] of Object.entries(answers)) {
-    if (state.players?.[uid] && answer.choice === questions[i].c) {
+    if (state.players?.[uid] && answer.choice === privateQuestions[i].c) {
       const earned = pointsForCorrectAnswer(answer, state.endsAt, mult);
       state.players[uid].score = roundScore((Number(state.players[uid].score) || 0) + earned);
+      state.roundEarned[uid] = earned;
     }
   }
+  // A resposta certa só vai para a sala pública depois do encerramento da rodada.
+  state.reveal = { correct: privateQuestions[i].c, explanation: privateQuestions[i].e };
   state.scoredEndsAt = state.endsAt;
   state.endsAt = 0;
 }
 function selectedScore() {
-  const a = room?.answers?.[room.index]?.[user?.uid];
-  const q = questions[room.index];
-  if (!a || !q || room.phase !== 'reveal') return null;
-  return a.choice === q.c ? pointsForCorrectAnswer(a, room.scoredEndsAt || 0, Number(room.multiplier) === 2 ? 2 : 1) : 0;
+  if (room?.phase !== 'reveal') return null;
+  const answer = room.answers?.[room.index]?.[user?.uid];
+  return answer ? Number(room.roundEarned?.[user?.uid] || 0) : null;
 }
 function renderRoom() {
   if (!room) return;
   const isHost = mode === 'host', isPlayer = mode === 'player';
   if (isHost && room.hostUid !== user?.uid) { notice('Você não é o organizador desta sala.'); home(); return; }
-  const q = questions[room.index];
+  const q = room.currentQuestion;
   const live = room.phase === 'question', reveal = room.phase === 'reveal';
   const finished = room.phase === 'finished', waiting = room.phase === 'lobby';
   const multiplier = Number(room.multiplier) === 2 ? 2 : 1;
@@ -305,8 +365,9 @@ function renderRoom() {
       ${isHost ? '<button id="restart" class="btn primary">↻ REINICIAR COM A MESMA TURMA</button>' : ''}</div>`;
   } else if (q) {
     const result = selectedScore();
+    const correct = reveal || finished ? room.reveal?.correct : undefined;
     const note = reveal
-      ? `<div class="notice"><strong>💡 Diagnóstico:</strong> ${escapeHTML(q.e)}</div>
+      ? `<div class="notice"><strong>💡 Diagnóstico:</strong> ${escapeHTML(room.reveal?.explanation || '')}</div>
          ${isPlayer ? `<div class="earned ${result > 0 ? 'earned-good' : ''}">${result == null ? 'Você não respondeu a esta questão.' : result > 0 ? '✅ Você ganhou ' + fmt(result) + ' pontos!' : 'Você não pontuou nesta rodada.'}</div>` : ''}`
       : isPlayer
         ? mine ? '<div class="notice">✅ Resposta enviada! A questão será revelada quando todos responderem ou o tempo terminar.</div>'
@@ -315,17 +376,17 @@ function renderRoom() {
         : `<p class="muted">${answered} de ${players().length} participantes responderam. A resposta será revelada automaticamente quando todos responderem ou o tempo acabar.</p>`;
 
     content = `<div class="panel">
-      <div class="question-header"><span class="tag">QUESTÃO ${room.index + 1} DE ${questions.length}</span>
+      <div class="question-header"><span class="tag">QUESTÃO ${room.index + 1} DE ${totalQuestions()}</span>
       <span class="tag ${multiplier === 2 ? 'bonus-tag bonus-glow' : ''}">${multiplier === 2 ? '⚡ RODADA 2×' : live ? '⏱ RESPONDENDO' : '✅ RESPOSTA REVELADA'}</span></div>
       ${multiplier === 2 ? '<div class="bonus-banner">⚡ PONTUAÇÃO EM DOBRO — ACERTO VALE DE 200 A 400 PONTOS!</div>' : ''}
       <div class="question">${escapeHTML(q.q)}</div>
       <div class="progress"><div id="timebar" style="width:${progress}%"></div></div>
       <div class="answers">${q.a.map((v,i) => {
-        const status = reveal ? (i === q.c ? 'correct' : i === selected ? 'wrong' : '') : i === selected ? 'selected' : '';
+        const status = reveal ? (i === correct ? 'correct' : i === selected ? 'wrong' : '') : i === selected ? 'selected' : '';
         return `<button class="answer ${status}" data-choice="${i}" ${!isPlayer || !open || mine ? 'disabled' : ''}><small>${'ABCD'[i]}</small>${escapeHTML(v)}</button>`;
       }).join('')}</div>
       ${note}
-      ${isHost ? `<div class="toolbar"><button id="advance" class="btn ${live ? 'warning' : 'primary'}">${live ? '✓ REVELAR AGORA' : room.index === questions.length-1 ? '🏆 FINALIZAR PARTIDA' : 'PRÓXIMA QUESTÃO →'}</button></div>` : ''}
+      ${isHost ? `<div class="toolbar"><button id="advance" class="btn ${live ? 'warning' : 'primary'}">${live ? '✓ REVELAR AGORA' : room.index === totalQuestions()-1 ? '🏆 FINALIZAR PARTIDA' : 'PRÓXIMA QUESTÃO →'}</button></div>` : ''}
     </div>`;
   } else {
     content = '<div class="panel">Carregando questão…</div>';
@@ -355,7 +416,7 @@ function renderRoom() {
     if (confirm(message)) advance('finishNow');
   };
   if ($('start')) $('start').onclick = () => advance('start');
-  if ($('advance')) $('advance').onclick = () => advance(live ? 'reveal' : room.index === questions.length-1 ? 'finish' : 'next');
+  if ($('advance')) $('advance').onclick = () => advance(live ? 'reveal' : room.index === totalQuestions()-1 ? 'finish' : 'next');
   if ($('restart')) $('restart').onclick = () => advance('restart');
   if ($('copy')) $('copy').onclick = () => navigator.clipboard.writeText(entryURL).then(() => notice('Link copiado!')).catch(() => notice(entryURL));
   document.querySelectorAll('[data-choice]').forEach(b => b.onclick = () => submit(Number(b.dataset.choice)));
@@ -399,12 +460,17 @@ async function advance(action) {
         if (action === 'start' && current.phase !== 'lobby') return;
         if (action === 'next' && current.phase !== 'reveal') return;
         const i = action === 'start' ? 0 : current.index + 1;
-        if (i >= questions.length) return;
+        if (i >= privateQuestions.length) return;
         current.index = i;
         current.phase = 'question';
         current.endsAt = serverNow() + ROUND_MS;
         current.scoredEndsAt = 0;
-        current.multiplier = (current.bonusRounds || []).includes(i) ? 2 : 1;
+        current.multiplier = (privateBonusRounds || []).includes(i) ? 2 : 1;
+        const q = privateQuestions[i];
+        // A pergunta atual pode ser vista pelo aluno; a resposta não.
+        current.currentQuestion = { q: q.q, a: q.a };
+        current.reveal = null;
+        current.roundEarned = null;
       } else if (action === 'reveal') {
         if (current.phase !== 'question') return;
         scoreRound(current);
@@ -422,16 +488,20 @@ async function advance(action) {
         current.endsAt = 0;
         current.scoredEndsAt = 0;
         current.multiplier = 1;
-        current.bonusRounds = pickDoubleRounds();
+        // O sorteio privado é atualizado fora da transação, após o reinício.
         current.answers = null;
         for (const p of Object.values(current.players || {})) p.score = 0;
       } else if (action === 'finish') {
-        if (current.phase !== 'reveal' || current.index !== questions.length-1) return;
+        if (current.phase !== 'reveal' || current.index !== privateQuestions.length-1) return;
         current.phase = 'finished';
         current.endsAt = 0;
       } else return;
       return current;
     }, { applyLocally: false });
+    if (result.committed && action === 'restart') {
+      privateBonusRounds = pickDoubleRounds();
+      await update(ref(db, 'privateRoomData/' + code), { bonusRounds: privateBonusRounds });
+    }
     if (!result.committed && !['reveal', 'finish'].includes(action))
       notice('Ação não aplicada. Confira o estado da partida.');
   } catch (e) { err(e); }
