@@ -7,12 +7,12 @@ import { firebaseConfig } from './firebase-config.js';
 
 const appEl = document.getElementById('app');
 const toastEl = document.getElementById('toast');
-const ROUND_MS = 30000;
+const ROUND_MS = 12000;
 const BASE_POINTS = 100;
 const SPEED_POINTS = 100;
-const DOUBLE_ROUNDS = 5;
+const DOUBLE_ROUNDS = 1;
 const SCORE_PRECISION = 1000; // Três casas decimais distinguem respostas por milissegundos.
-const EXPECTED_QUESTIONS = 20;
+const EXPECTED_QUESTIONS = 10;
 let privateQuestions = null;
 let privateBonusRounds = null;
 const totalQuestions = () => Number(room?.totalQuestions) || privateQuestions?.length || EXPECTED_QUESTIONS;
@@ -44,7 +44,7 @@ function err(e) {
 function root(inner) {
   appEl.innerHTML = `<div class="shell"><header class="top">
     <div class="brand"><div class="logo">⚡</div><div>DESAFIO <span style="color:#66dce8">DIAGNÓSTICO</span>
-    <div class="muted mini">Laboratório de Hardware · SENAI-MG</div></div></div>
+    <div class="muted mini">Peças e funções · SENAI-MG</div></div></div>
     <div class="tag">● MULTIPLAYER</div></header>${inner}
     <footer class="footer"><span>Projeto educacional independente • Demonstração de diagnóstico de hardware</span>
     <span>Feito para funcionar no navegador</span></footer></div>`;
@@ -56,11 +56,11 @@ function stopWatch() {
 }
 function home() {
   stopWatch(); mode = ''; code = ''; room = null;
-  root(`<main class="hero"><div><div class="tag">🔧 LABORATÓRIO DE DIAGNÓSTICO</div>
-    <h1>Você consegue <span>descobrir o defeito?</span></h1>
-    <p>Investigue problemas de computadores, responda antes do tempo acabar e dispute o pódio!</p>
+  root(`<main class="hero"><div><div class="tag">🔧 PEÇAS DO COMPUTADOR</div>
+    <h1>Você conhece <span>as peças do PC?</span></h1>
+    <p>Veja as peças na bancada, descubra suas funções e dispute o pódio!</p>
     <div class="toolbar"><div class="tag">${EXPECTED_QUESTIONS} questões</div><div class="tag">100–200 pts por acerto</div>
-    <div class="tag">30 segundos</div><div class="tag bonus-tag">⚡ Rodadas 2×</div></div></div>
+    <div class="tag">12 segundos</div><div class="tag bonus-tag">⚡ Rodadas 2×</div></div></div>
     <div><section class="panel stack"><h2>Entrar em uma partida</h2>
     <label class="field">Código da sala<input id="joincode" placeholder="Ex.: AB12CD" maxlength="6" autocomplete="off" style="text-transform:uppercase"></label>
     <label class="field">Seu nome ou apelido<input id="nickname" placeholder="Como você aparecerá no ranking" maxlength="22"></label>
@@ -115,7 +115,7 @@ function hostLogin() {
 }
 function validateBank(value) {
   const qs = Array.isArray(value) ? value : value?.questions;
-  if (!Array.isArray(qs) || qs.length !== EXPECTED_QUESTIONS) throw Error('O banco privado precisa ter 20 questões.');
+  if (!Array.isArray(qs) || qs.length !== EXPECTED_QUESTIONS) throw Error('O banco privado precisa ter 10 questões.');
   qs.forEach((q,i) => {
     if (typeof q.q !== 'string' || !q.q.trim() || !Array.isArray(q.a) || q.a.length !== 4 ||
         !q.a.every(a => typeof a === 'string' && !!a.trim()) || !Number.isInteger(q.c) ||
@@ -129,7 +129,15 @@ async function hostDashboard() {
   stopWatch(); mode = 'admin'; privateQuestions = null;
   try {
     const snap = await get(ref(db, privateBankPath));
-    if (snap.exists()) privateQuestions = validateBank(snap.val());
+    if (snap.exists()) {
+      const stored = snap.val();
+      const storedQuestions = Array.isArray(stored) ? stored : stored?.questions;
+      if (Array.isArray(storedQuestions) && storedQuestions.length === EXPECTED_QUESTIONS) {
+        privateQuestions = validateBank(stored);
+      } else {
+        notice(`Existe um banco antigo com ${Array.isArray(storedQuestions) ? storedQuestions.length : '?'} perguntas. Importe o novo banco de 10 questões.`);
+      }
+    }
   } catch(e) {
     // Mostra o erro de autenticação, sem conceder acesso a nenhum arquivo público.
     err(e);
@@ -145,12 +153,12 @@ function renderHostDashboard() {
     <div class="tag">🛡️ ADMINISTRADOR</div><h2 style="margin-top:15px">Controle do desafio</h2>
     <p class="muted">O gabarito é privado: somente sua conta autorizada lê as questões no Firebase.</p>
     <div class="statrow"><div class="stat"><strong>${ready ? privateQuestions.length : '—'}</strong><small>questões</small></div>
-    <div class="stat"><strong>30s</strong><small>por rodada</small></div>
+    <div class="stat"><strong>12s</strong><small>por rodada</small></div>
     <div class="stat"><strong>2×</strong><small>rodadas surpresa</small></div></div>
     ${ready ? '<div class="notice">✅ Banco privado carregado. Você pode criar sua sala.</div>'
        : '<div class="notice">🔒 Banco privado ainda não importado. Selecione o arquivo JSON privado, sem colocá-lo no GitHub.</div>'}
     <div class="stack" style="margin-top:16px">
-      <label class="field">Importar ou substituir o banco privado de 20 questões
+      <label class="field">Importar ou substituir o banco privado de 10 questões
       <input id="privateFile" type="file" accept=".json,application/json"></label>
       <button id="importBank" class="btn ghost">⬆ IMPORTAR PARA O FIREBASE PRIVADO</button>
       <div class="toolbar"><button id="new" class="btn primary" ${ready ? '' : 'disabled'}>+ CRIAR SALA</button>
@@ -163,7 +171,7 @@ function renderHostDashboard() {
     if (!file) return notice('Selecione seu arquivo JSON privado.');
     try {
       const bank = validateBank(JSON.parse(await file.text()));
-      if (!confirm('Importar 20 questões e respostas para o Firebase privado? Nenhuma resposta será publicada no GitHub.')) return;
+      if (!confirm('Importar 10 questões e respostas para o Firebase privado? Nenhuma resposta será publicada no GitHub.')) return;
       await set(ref(db, privateBankPath), { questions: bank, version: 6, importedAt: serverTimestamp() });
       privateQuestions = bank;
       notice('Banco privado importado com sucesso.');
@@ -171,7 +179,7 @@ function renderHostDashboard() {
     } catch(e) { err(e); }
   };
 }
-// Sorteia exatamente 5 questões diferentes. O sorteio é feito uma vez por partida,
+// Sorteia exatamente 1 rodada 2× em cada partida.
 // e o multiplicador passa a ser público apenas na rodada que começa.
 function pickDoubleRounds() {
   const ids = Array.from({ length: EXPECTED_QUESTIONS }, (_, i) => i);
@@ -356,7 +364,7 @@ function renderRoom() {
     content = `<div class="panel center"><div class="bigicon">🧠</div><div class="eyebrow">SALA DE ESPERA</div>
       <h2>${isHost ? 'Tudo pronto para começar!' : 'Aguardando o apresentador…'}</h2>
       <p class="muted">${isHost ? 'Projete o código e espere os visitantes entrarem.' : 'Você já está na sala. A partida começa em instantes.'}</p>
-      <div class="notice">⚡ Respostas certas valem 100 a 200 pontos. Pontuação considera até os milissegundos! Em 5 rodadas surpresa, tudo vale <strong>2×</strong>.</div>
+      <div class="notice">⚡ Respostas certas valem 100 a 200 pontos. Pontuação considera até os milissegundos! Em uma rodada surpresa, tudo vale <strong>2×</strong>.</div>
       ${isHost ? '<div style="margin-top:16px"><button id="start" class="btn primary">▶ INICIAR DESAFIO</button></div>' : ''}</div>`;
   } else if (finished) {
     content = `<div class="panel center"><div class="bigicon">🏆</div><div class="eyebrow">DESAFIO CONCLUÍDO</div>
