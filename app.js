@@ -21,6 +21,11 @@ const privateBankPath = 'privateQuestionBanks/current';
 let auth, db, user = null;
 let room = null, code = '', mode = '', unsubscribe = null, interval = null;
 let hostBusy = false, serverOffset = 0;
+// Atualiza só os trechos que mudam; evita reconstruir toda a interface a cada resposta.
+let lastRoomViewKey = null;
+let rosterFingerprint = null;
+let lastAutoRevealKey = '';
+let lastAutoRevealAt = 0;
 
 const configured = !Object.values(firebaseConfig).some(x => String(x).includes('COLE_AQUI'));
 const $ = id => document.getElementById(id);
@@ -53,6 +58,10 @@ function stopWatch() {
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
   clearInterval(interval);
   interval = null;
+  lastRoomViewKey = null;
+  rosterFingerprint = null;
+  lastAutoRevealKey = '';
+  lastAutoRevealAt = 0;
 }
 function home() {
   stopWatch(); mode = ''; code = ''; room = null;
@@ -225,8 +234,50 @@ function watchRoom() {
       showExpulsion();
       return;
     }
-    renderRoom();
+    // A entrada de uma nova resposta não exige redesenhar toda a página.
+    const ownChoice = mode === 'player'
+      ? (room.answers?.[room.index]?.[user?.uid]?.choice ?? 'pendente') : '';
+    const viewKey = [mode, room.phase, room.index, room.multiplier, ownChoice].join(':');
+    if (viewKey !== lastRoomViewKey) {
+      lastRoomViewKey = viewKey;
+      renderRoom();
+    } else {
+      refreshRoomDynamicParts();
+    }
+    maybeAutoReveal();
   }, err);
+}
+function refreshRoomDynamicParts() {
+  if (!room) return;
+  const count = $('participantsCount');
+  if (count) count.textContent = players().length;
+  const countAnswers = $('answeredCount');
+  if (countAnswers) countAnswers.textContent = Object.keys(room.answers?.[room.index] || {}).length;
+  const countPlayers = $('answeredPlayers');
+  if (countPlayers) countPlayers.textContent = players().length;
+  const freshRoster = JSON.stringify(room.players || {});
+  if (freshRoster === rosterFingerprint) return;
+  rosterFingerprint = freshRoster;
+  const ranking = $('rankingList');
+  if (ranking) ranking.innerHTML = leaderboard();
+  const controls = $('participantControls');
+  if (controls) {
+    controls.innerHTML = participantControls();
+    controls.querySelectorAll('[data-kick]').forEach(b => {
+      b.onclick = () => kickPlayer(b.dataset.kick);
+    });
+  }
+}
+function maybeAutoReveal() {
+  if (mode !== 'host' || !room || room.phase !== 'question' || hostBusy) return;
+  if (!everybodyAnswered(room) && room.endsAt > serverNow()) return;
+  const key = `${code}:${room.index}:${room.endsAt}`;
+  const at = serverNow();
+  // Se o Firebase rejeitar a operação, não repetir o mesmo erro a cada 250 ms.
+  if (lastAutoRevealKey === key && at - lastAutoRevealAt < 4500) return;
+  lastAutoRevealKey = key;
+  lastAutoRevealAt = at;
+  void advance('reveal');
 }
 function showExpulsion() {
   const removedCode = code;
@@ -305,7 +356,7 @@ function podium() {
 }
 function headerStats() {
   const remaining = room.phase === 'question' ? Math.max(0, Math.ceil((room.endsAt - serverNow()) / 1000)) : '—';
-  return `<div class="statrow"><div class="stat"><strong>${players().length}</strong><small>participantes</small></div>
+  return `<div class="statrow"><div class="stat"><strong id="participantsCount">${players().length}</strong><small>participantes</small></div>
     <div class="stat"><strong>${Math.max(0, Number(room.index ?? -1)+1)}/${totalQuestions()}</strong><small>questão</small></div>
     <div class="stat"><strong id="timer">${remaining}</strong><small>segundos</small></div></div>`;
 }
@@ -381,7 +432,7 @@ function renderRoom() {
         ? mine ? '<div class="notice">✅ Resposta enviada! A questão será revelada quando todos responderem ou o tempo terminar.</div>'
                : !open ? '<div class="notice">⏰ Tempo encerrado. Aguarde o apresentador.</div>'
                        : '<p class="muted mini">Escolha uma alternativa: cada milissegundo conta!</p>'
-        : `<p class="muted">${answered} de ${players().length} participantes responderam. A resposta será revelada automaticamente quando todos responderem ou o tempo acabar.</p>`;
+        : `<p class="muted"><span id="answeredCount">${answered}</span> de <span id="answeredPlayers">${players().length}</span> participantes responderam. A resposta será revelada automaticamente quando todos responderem ou o tempo acabar.</p>`;
 
     content = `<div class="panel">
       <div class="question-header"><span class="tag">QUESTÃO ${room.index + 1} DE ${totalQuestions()}</span>
@@ -407,12 +458,12 @@ function renderRoom() {
     <div class="toolbar room-actions">${isHost && !finished ? '<button class="btn danger" id="endgame">■ ENCERRAR PARTIDA</button>' : ''}<button class="btn ghost" id="leave">${isHost ? 'FECHAR PAINEL' : 'SAIR'}</button></div></div>
     ${headerStats()}
     <div class="game-layout"><div class="game-primary">${content}</div>
-    <div class="game-sidebar"><section class="panel"><h3>🏆 TOP 3 — Ranking ao vivo</h3>${leaderboard()}</section>
+    <div class="game-sidebar"><section class="panel"><h3>🏆 TOP 3 — Ranking ao vivo</h3><div id="rankingList">${leaderboard()}</div></section>
     ${isHost && !finished ? `<section class="panel manage-panel"><h3>👥 Gerenciar participantes</h3>
     <p class="muted mini">Remova alguém da partida e do ranking.</p>
-    ${participantControls()}</section>` : ''}
+    <div id="participantControls">${participantControls()}</div></section>` : ''}
     ${isHost ? `<section class="panel"><h3>Convide os jogadores</h3><div class="center">
-      <img class="qr" alt="QR Code para entrar" src="https://api.qrserver.com/v1/create-qr-code/?size=170x170&data=${encodeURIComponent(entryURL)}">
+      ${waiting ? `<img class="qr" alt="QR Code para entrar" src="https://api.qrserver.com/v1/create-qr-code/?size=170x170&data=${encodeURIComponent(entryURL)}">` : ''}
       <p class="linkbox">${escapeHTML(entryURL)}</p>
       <button id="copy" class="btn ghost full">COPIAR LINK DA SALA</button></div>
       <p class="muted mini">O QR Code usa um serviço externo. Também dá para entrar digitando o código.</p></section>` : ''}</div></div>`);
@@ -429,6 +480,7 @@ function renderRoom() {
   if ($('copy')) $('copy').onclick = () => navigator.clipboard.writeText(entryURL).then(() => notice('Link copiado!')).catch(() => notice(entryURL));
   document.querySelectorAll('[data-choice]').forEach(b => b.onclick = () => submit(Number(b.dataset.choice)));
   document.querySelectorAll('[data-kick]').forEach(b => b.onclick = () => kickPlayer(b.dataset.kick));
+  rosterFingerprint = JSON.stringify(room.players || {});
 
   clearInterval(interval);
   interval = setInterval(() => {
@@ -438,12 +490,9 @@ function renderRoom() {
     if (mode === 'player' && room?.phase === 'question' && room.endsAt <= serverNow()) {
       document.querySelectorAll('[data-choice]').forEach(b => b.disabled = true);
     }
-    // O apresentador mantém a sala sincronizada. Transação evita pontuação duplicada.
-    if (mode === 'host' && room?.phase === 'question' &&
-        (everybodyAnswered(room) || room.endsAt <= serverNow())) {
-      advance('reveal');
-    }
-  }, 150);
+    // Somente tenta revelar de novo após intervalo de segurança em caso de erro.
+    maybeAutoReveal();
+  }, 250);
 }
 async function submit(choice) {
   try {
@@ -470,6 +519,8 @@ async function advance(action) {
         const i = action === 'start' ? 0 : current.index + 1;
         if (i >= privateQuestions.length) return;
         current.index = i;
+        // Só manter respostas da rodada atual. Pontuação já está acumulada nos jogadores.
+        if (action === 'next') current.answers = null;
         current.phase = 'question';
         current.endsAt = serverNow() + ROUND_MS;
         current.scoredEndsAt = 0;
